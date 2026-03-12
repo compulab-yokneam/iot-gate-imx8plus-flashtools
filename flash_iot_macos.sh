@@ -84,7 +84,7 @@ detect_arch() {
 ensure_root() {
     if [[ "${EUID}" -ne 0 ]]; then
         log_warn "Root privileges required for USB device access. Re-running with sudo..."
-        exec sudo "$0" "$@"
+        exec sudo "$0" "${ORIG_ARGS[@]}"
     fi
 }
 
@@ -484,6 +484,9 @@ USAGE
 }
 
 main() {
+    # Save original args before parsing shifts them away
+    ORIG_ARGS=("$@")
+
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -537,7 +540,7 @@ main() {
     fi
 
     # Ensure root for USB access
-    ensure_root "$@"
+    ensure_root
 
     # Check/install dependencies
     install_dependencies
