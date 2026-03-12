@@ -16,6 +16,7 @@ set -euo pipefail
 
 readonly UUU_VERSION="1.5.243"
 readonly UUU_RELEASE_URL="https://github.com/nxp-imx/mfgtools/releases/download/uuu_${UUU_VERSION}"
+readonly UUU_MAC_ARM_SHA256="7f2ce10d5e738af635b339696709e2c3df4984801cc6c3764cd1c207c7aac9b0"
 readonly NXP_USB_VID="0x1fc9"  # i.MX8M Plus (PID: 0x0146)
 readonly DEVICE_DETECT_TIMEOUT=60
 readonly DEVICE_DETECT_INTERVAL=2
@@ -30,6 +31,7 @@ BALENA_IMAGE=""
 CUSTOM_BOOTLOADER=""
 INSTALL_DEPS_ONLY=0
 UUU_BIN=""
+BREW_PREFIX=""
 
 ###############################################################################
 # Section 2: Cleanup & Signal Handling
@@ -94,24 +96,25 @@ ensure_root() {
 
 check_homebrew() {
     if ! command -v brew &>/dev/null; then
-        # Also check common install locations (command may not be in root's PATH)
-        if [[ -x "/opt/homebrew/bin/brew" ]] || [[ -x "/usr/local/bin/brew" ]]; then
-            log_info "Homebrew found."
-            return 0
+        # Resolve brew from common install locations (may not be in root's PATH)
+        local brew_bin=""
+        if [[ -x "/opt/homebrew/bin/brew" ]]; then
+            brew_bin="/opt/homebrew/bin/brew"
+        elif [[ -x "/usr/local/bin/brew" ]]; then
+            brew_bin="/usr/local/bin/brew"
+        else
+            log_error "Homebrew is required but not installed.\nInstall it from: https://brew.sh"
         fi
-        log_error "Homebrew is required but not installed.\nInstall it from: https://brew.sh"
+        # Add brew to PATH so subsequent brew calls work
+        eval "$("${brew_bin}" shellenv)"
     fi
-    log_info "Homebrew found."
+    BREW_PREFIX="$(brew --prefix)"
+    log_info "Homebrew found (${BREW_PREFIX})."
 }
 
 check_libusb() {
     # Use filesystem check — `brew list` refuses to run as root
-    local brew_prefix
-    if [[ "$(uname -m)" == "arm64" ]]; then
-        brew_prefix="/opt/homebrew"
-    else
-        brew_prefix="/usr/local"
-    fi
+    local brew_prefix="${BREW_PREFIX}"
     if [[ -d "${brew_prefix}/Cellar/libusb" ]] || [[ -f "${brew_prefix}/lib/libusb-1.0.dylib" ]]; then
         log_info "libusb found."
         return 0
@@ -151,30 +154,40 @@ download_uuu() {
     local dest="${SCRIPT_DIR}/uuu"
 
     log_info "Downloading uuu ${UUU_VERSION} for ${arch}..."
-    if curl -fL -o "${dest}" "${url}"; then
-        chmod +x "${dest}"
-        # Remove quarantine flag and ad-hoc codesign for macOS Gatekeeper
-        xattr -d com.apple.quarantine "${dest}" 2>/dev/null || true
-        codesign --force --sign - "${dest}" 2>/dev/null || true
-
-        # Verify the binary is a valid executable
-        if file "${dest}" | grep -q "Mach-O"; then
-            UUU_BIN="${dest}"
-            log_info "uuu ${UUU_VERSION} downloaded and installed to ${dest}"
-            return 0
-        else
-            log_warn "Downloaded file is not a valid macOS binary."
-            rm -f "${dest}"
-            return 1
-        fi
-    else
+    if ! curl -fL -o "${dest}" "${url}"; then
         log_warn "Failed to download uuu binary."
         return 1
     fi
+
+    # Verify integrity against pinned SHA256
+    local actual_sha256
+    actual_sha256="$(shasum -a 256 "${dest}" | awk '{print $1}')"
+    if [[ "${actual_sha256}" != "${UUU_MAC_ARM_SHA256}" ]]; then
+        log_warn "SHA256 checksum mismatch for downloaded uuu binary."
+        log_warn "  Expected: ${UUU_MAC_ARM_SHA256}"
+        log_warn "  Got:      ${actual_sha256}"
+        rm -f "${dest}"
+        return 1
+    fi
+    log_info "SHA256 checksum verified."
+
+    chmod +x "${dest}"
+    # Remove quarantine flag and ad-hoc codesign for macOS Gatekeeper
+    xattr -d com.apple.quarantine "${dest}" 2>/dev/null || true
+    codesign --force --sign - "${dest}" 2>/dev/null || true
+
+    UUU_BIN="${dest}"
+    log_info "uuu ${UUU_VERSION} downloaded and installed to ${dest}"
+    return 0
 }
 
 build_uuu_from_source() {
     log_info "Building uuu from source (this may take a few minutes)..."
+
+    # Xcode Command Line Tools are required for git, make, and C++ headers
+    if ! xcode-select -p &>/dev/null; then
+        log_error "Xcode Command Line Tools are required to build uuu from source.\nInstall them with: xcode-select --install"
+    fi
 
     # Install build dependencies
     local deps=(cmake libusb openssl pkg-config tinyxml2)
@@ -332,6 +345,14 @@ extract_bootloader() {
     local image_path="$1"
 
     log_info "Attaching image as virtual disk..."
+
+    # Detach any stale attachment of this image from a previous failed run
+    local stale_disk
+    stale_disk="$(hdiutil info 2>/dev/null | grep -B20 "${image_path}" | grep -oE '/dev/disk[0-9]+' | head -1)" || true
+    if [[ -n "${stale_disk}" ]]; then
+        log_warn "Image already attached as ${stale_disk} (stale). Detaching..."
+        hdiutil detach "${stale_disk}" -force >/dev/null 2>&1 || true
+    fi
 
     # Let macOS attach and auto-mount partitions (like losetup + kpartx on Linux)
     local attach_output
@@ -517,14 +538,12 @@ main() {
         shift
     done
 
-    # Create temp directory
-    TEMP_DIR="$(mktemp -d -t flash_iot_macos.XXXXXX)"
-
     # Deps-only mode must NOT run as root (Homebrew refuses)
     if [[ "${INSTALL_DEPS_ONLY}" -eq 1 ]]; then
         if [[ "${EUID}" -eq 0 ]]; then
             log_error "Do not run --install-deps with sudo. Homebrew refuses to run as root.\nRun as: ./flash_iot_macos.sh --install-deps"
         fi
+        TEMP_DIR="$(mktemp -d -t flash_iot_macos.XXXXXX)"
         install_dependencies
         log_info "Dependencies installed. You can now run the flash script."
         exit 0
@@ -539,8 +558,12 @@ main() {
         log_error "Image file not found: ${BALENA_IMAGE}"
     fi
 
-    # Ensure root for USB access
+    # Ensure root for USB access (before allocating temp resources so
+    # exec sudo doesn't leak a temp dir from the non-root process)
     ensure_root
+
+    # Create temp directory (after privilege escalation)
+    TEMP_DIR="$(mktemp -d -t flash_iot_macos.XXXXXX)"
 
     # Check/install dependencies
     install_dependencies

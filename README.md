@@ -93,6 +93,7 @@ Docker Desktop for macOS cannot pass USB devices through to the hypervisor, so a
 ### Required software
 
 - [Homebrew](https://brew.sh)
+- Xcode Command Line Tools (Intel Macs only — needed to build `uuu` from source): `xcode-select --install`
 - libusb (installed automatically)
 - uuu (installed automatically)
 
@@ -104,7 +105,7 @@ Install dependencies (run once, without `sudo`):
 $ ./flash_iot_macos.sh --install-deps
 ```
 
-On Apple Silicon Macs, this downloads a pre-built `uuu` binary from [NXP's mfgtools releases](https://github.com/nxp-imx/mfgtools/releases). On Intel Macs, `uuu` is built from source automatically.
+On Apple Silicon Macs, this downloads a pre-built `uuu` binary from [NXP's mfgtools releases](https://github.com/nxp-imx/mfgtools/releases). On Intel Macs, no pre-built binary is available, so `uuu` is built from source automatically (requires Xcode Command Line Tools).
 
 ### Usage
 
