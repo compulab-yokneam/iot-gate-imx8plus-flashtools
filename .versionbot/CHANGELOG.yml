@@ -1,4 +1,59 @@
 - commits:
+    - subject: "flash_iot_macos: address PR review feedback"
+      hash: b38b7830e81a6dbcc1cd8d8ad2c0605d9451f7ab
+      body: |
+        - Verify downloaded uuu binary integrity with pinned SHA256 checksum,
+          fail closed on mismatch
+        - Check for Xcode Command Line Tools before building uuu from source,
+          document prerequisite in README for Intel Macs
+        - Move ensure_root before TEMP_DIR creation so exec sudo doesn't
+          leak a temp directory from the non-root process
+        - Resolve brew path via eval "$(brew shellenv)" when not in PATH
+          (e.g. under sudo) and store BREW_PREFIX for consistent use
+        - Detach stale hdiutil attachments from previous failed runs before
+          attaching the image
+      footer:
+        Change-type: patch
+        change-type: patch
+        Signed-off-by: Shaun Mulligan <switchflip.shaun@gmail.com>
+        signed-off-by: Shaun Mulligan <switchflip.shaun@gmail.com>
+      author: Shaun Mulligan
+      nested: []
+    - subject: "flash_iot_macos: preserve original args for sudo re-exec"
+      hash: c8513317a1d897976eeccabfce99fd0a2982a5f7
+      body: |
+        The argument parsing loop shifts all positional parameters, so
+        $@ is empty by the time ensure_root is called. Save the original
+        args before parsing and use them for the sudo re-invocation.
+      footer:
+        Change-type: patch
+        change-type: patch
+        Signed-off-by: Shaun Mulligan <switchflip.shaun@gmail.com>
+        signed-off-by: Shaun Mulligan <switchflip.shaun@gmail.com>
+      author: Shaun Mulligan
+      nested: []
+    - subject: "flash_iot_macos: add native macOS flash script"
+      hash: e614560739c840ce1cf41ee44718f2a5f9f6cf13
+      body: |
+        Docker Desktop for macOS cannot pass USB devices through to the
+        hypervisor, making the containerized flashing approach impossible.
+        This adds flash_iot_macos.sh which runs directly on the host using
+        NXP's uuu tool to flash the bootloader and OS image to eMMC over USB.
+
+        Supports Apple Silicon (pre-built uuu binary) and Intel Macs
+        (builds uuu from source). Updates README to document both Linux
+        and macOS provisioning workflows.
+      footer:
+        Change-type: minor
+        change-type: minor
+        Signed-off-by: Shaun Mulligan <switchflip.shaun@gmail.com>
+        signed-off-by: Shaun Mulligan <switchflip.shaun@gmail.com>
+      author: Shaun Mulligan
+      nested: []
+  version: 0.2.0
+  title: ""
+  date: 2026-03-12T14:38:35.272Z
+- commits:
     - subject: "Dockerfile: add tinyxml dependency"
       hash: 82426e11edd87bc9b3f66d4d37b2d49be3aae593
       body: |
